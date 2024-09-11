@@ -1,0 +1,268 @@
+---
+title: "Principal Component Analysis and Plotly"
+output: github_document
+always_allow_html: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## NOTE: PLOTLY PLOTS ARE CURRENTLY NOT WORKING
+
+## Outline
+
+We are going to outline the concept of *Principal Component Analysis* (PCA) and use it to reduce the size of the feature space of the Iris data set. We'll then fit a tree based model to both the original Iris data set and the new PCA-transformed data and compare model performance. We'll be using plotly to produce various plots including a Scree plot for our PCA process.
+
+## Motivation for PCA
+
+Why might someone want to use PCA? Consider a dataset where we have a very large number of features, in the thousands or millions perhaps. Fitting a predictive model to such a dataset might be computationally impossible, we can only throw so much computing power at the problem. If we could reduce the number of features while still maintaining **most** of the information from the original feature space then we might take this deal due to the benefits of working with a much smaller number of features. Reducing the feature space of your data can result in a less complicated model and a more reasonable training time.
+
+## Outline of PCA
+
+PCA rebases your data and creates new features called *principal components* that are linear combinations of the current features. These principal components are made by finding lines, or directions in your data cloud where the most variability is present. If we were to fit multiples lines through our data cloud (through the mean of our data) and project our data points onto the lines, then the first principal component would be the line that has the largest sum of square distances from the mean. The other principal componenets would be lines that are orthogonal to the first. 
+
+## Coding:
+
+Now that we've got a bit of the explanation out of the way, we can start working in R.
+
+### Packages
+
+We'll start by loading all of our packages:
+
+```{r, warning=FALSE, message = FALSE}
+library(plyr)
+library(tidyr)
+library(dplyr)
+library(plotly)
+```
+
+### Iris Data
+
+Now we'll get our data. We're going to use the popular Iris data set to explore PCA. Let's explore it briefly:
+
+```{r}
+glimpse(iris)
+```
+
+We have 4 features:
+
+* Sepal Length
+* Sepal Width
+* Petal Length
+* Petal Width
+
+and a target variable Species:
+
+```{r}
+unique(iris$Species)
+```
+
+We can produce some plots:
+
+```{r}
+# Produce long format of data for plotly plots
+iris_long <- iris %>%
+  gather(key = "Feature",
+         value = "Value",
+         -Species)
+
+# Create 3 plots for each unqiue response value
+p1 <- plot_ly(iris_long %>% filter(Species == "setosa"),
+              x = ~Value,
+              color = ~Feature,type = "histogram",
+              text  = ~paste0(Species,"\n",
+                              Feature,"\n"))
+
+p2 <- plot_ly(iris_long %>% filter(Species == "versicolor"),
+              x = ~Value,
+              color = ~Feature,type = "histogram",
+              text  = ~paste0(Species,"\n",
+                              Feature,"\n"))
+
+p3 <- plot_ly(iris_long %>% filter(Species == "virginica"),
+              x = ~Value,
+              color = ~Feature,type = "histogram",
+              text  = ~paste0(Species,"\n",
+                              Feature,"\n"))
+
+# Use subplots to plot together
+# subplot(p1,
+#         style(p2, showlegend = FALSE),
+#         style(p3, showlegend = FALSE),
+#         nrows = 3)
+```
+
+### Split Features and Response
+
+We will split our data set into two separate data sets, one containing the 4 features and the other containing the response variable Species:
+
+```{r}
+# Features
+x_df <- iris %>% 
+  dplyr::select(-Species)
+
+# Response
+y_df <- iris %>% 
+  dplyr::select(Species)
+```
+
+### Standardize the features
+
+The first step is to standardise our data and then to center the data by subtracting the mean from each data point. Centering the data is an important step in the PCA process.
+
+```{r}
+# Standardize data
+x_standard_df <- data.frame(apply(x_df,
+                                  2,
+                                  FUN = function(x){(x - min(x))/(max(x) - min(x))}))
+
+# Center data
+x_centered_df <- data.frame(apply(x_standard_df,
+                                2,
+                                FUN = function(x){ x - mean(x)}))
+```
+
+### Convert from DataFrame to Matrix
+
+We'll convert our data to a matrix to allow for matrix multiplication:
+
+```{r}
+x_centered_matrix <- as.matrix(x_centered_df)
+```
+
+### Covariance Matrix
+
+We now calculate the covariance matrix of our data (We have calculated this the long way but we could alternatively use the cov() function in R):
+
+```{r}
+cov_matrix <- (t(x_centered_matrix) %*% x_centered_matrix) / (nrow(x_centered_matrix) - 1)
+```
+
+### Eigenvectors
+
+As mentioned, matrices can be thought of as linear tranformations of vectors. The covariance matrix happens to apply an important transformaton with respect to the data it is generated from. Given a vector $v$, applying the covariance matrix to $v$ it will rotate $v$ towards the direction of the most variation in the sample data. As this process is repeated it, the direction of $v$ will slowly converge to the direction of the most variation. As we can recall from earlier, that is exactly what we're looking for when trying to calculate the prinipal components for PCA. Now, we could iteratively apply the covariance matrix transformation to some arbitrary vector and we will arrive at a point of convergence, or we could simply find a vector $v$ such that applying the covariance matrix to $v$ does not change its direction, namely the eigenvectors of the covariance matrix!
+
+```{r}
+eigenvectors_df <- as.data.frame(eigen(cov_matrix)$vectors)
+
+# take a look:
+eigenvectors_df
+```
+
+### Eigenvalues
+
+Each eigenvector has a corresponding eigenvalue. This value corresponds to the magnitude of the transformation. That is, if we consider our eigenvector $e$, and apply our covariance matrix transformation to it, the eigenvalue tells us how much the eigenvector $e$ will grow or shrink (remembering that the direction of the eigenvector does not change).
+
+```{r}
+eigenvalues_df <- data.frame("Eigenvalue" = eigen(cov_matrix)$values)
+
+# take a look:
+eigenvalues_df
+```
+
+As for PCA, the eigenvalues tell us how much of the variability in the data is explained by each prinicpal component, the higher the eigenvalue, the more variability it explains. We can make this a little easier to intepret by creating a specific column:
+
+```{r}
+# add variation and cumulative variation columns:
+eigenvalues_df <- eigenvalues_df %>%
+  mutate("Variation" = Eigenvalue / sum(Eigenvalue),
+         "CumulativeVariation" = cumsum(Variation))
+
+# take a look:
+eigenvalues_df
+```
+
+We'll also store the number of eigenvalues as a variable for use with plotting, this is equal to the number of features:
+
+```{r}
+num_eigenvalues <- nrow(eigenvalues_df)
+```
+
+### Scree Plot
+
+A Scree Plot is a plot used to visualise how much of the variability in the original data set is being explained by each principal component. Despite being all a little subjective, it is also a useful plot when determining how many principal componenets to keep.
+
+```{r}
+# Plotly Plot:
+screeplot <- plot_ly() %>%
+  # Add Variation Bars
+  add_trace(x = 1:num_eigenvalues,
+            y = eigenvalues_df$Variation,
+            name = "Variation",
+            type = "bar",
+            text = ~paste0("PC", 1:num_eigenvalues, "\n",
+                           "Variation Explained: ", round(eigenvalues_df$Variation * 100,2), "%", "\n",
+                           "Eigenvalue: ", round(eigenvalues_df$Eigenvalue,2)),
+  hoverinfo = 'text') %>%
+  # Add Cumulative Line
+  add_trace(x = 1:num_eigenvalues,
+            y = eigenvalues_df$CumulativeVariation,
+            name = "Cumulative Variation",
+            type = "scatter",
+            mode = "lines+markers",
+            text = ~paste0("PC", 1:num_eigenvalues, "\n",
+                           "Cumulative Variation Explained: ", round(eigenvalues_df$CumulativeVariation * 100,2), "%", "\n",
+                           "Eigenvalue: ", round(eigenvalues_df$Eigenvalue,2)),
+            hoverinfo = 'text') %>%
+  layout(title = "Scree Plot for PCA on Iris Data",
+         xaxis = list(title = "Principal Components"),
+         yaxis = list(title = "Variation",
+                      tickformat = ',.0%'))
+
+# screeplot
+```
+
+
+### Create Principal Components
+
+Now we can transform our data onto our new linear combinations of our old features.
+
+### Transformation Matrix
+
+First we build our transformation matrix:
+
+```{r}
+transformation_matrix <- as.matrix(eigenvectors_df[,1:2])
+```
+
+### Transform the Data
+
+Take the dot product of our centered data and our transformation matrix:
+
+```{r}
+transformed_df <- as.data.frame(x_centered_matrix %*% transformation_matrix)
+
+# take a look:
+head(transformed_df, n = 5)
+```
+
+Rename the columns:
+
+```{r}
+names(transformed_df) <- c("PC1", "PC2")
+```
+
+Bolt on our response variable:
+
+```{r}
+transformed_df <- cbind(transformed_df,
+                          y_df)
+```
+
+### Scatterplot
+
+Now that we only have two features, we can plot all the information in our data set in a single 2D scatter plot:
+
+```{r}
+# Plot
+scatterplot <- plot_ly(data = transformed_df) %>%
+  add_trace(x = ~PC1,
+            y = ~PC2,
+            color = ~Species,
+            type = "scatter",
+            mode = "markers") %>%
+  layout(title = "Iris Species after PCA")
+
+# scatterplot
+```
